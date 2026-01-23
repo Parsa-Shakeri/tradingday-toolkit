@@ -1,49 +1,155 @@
-// Trading Day Toolkit (static)
-// - Upload CSVs (Date + Close/Adj Close) for multiple tickers
-// - Compute MA20, MA50, R5, R20, Score
-// - Trend filter: Close > MA20 > MA50
-// - Picks: top N by Score
-// - Allocation: target leverage * cash, split equally among picks (simple + robust)
+// Trading Day Auto Toolkit
+// Fetch daily historical CSV from Stooq (no API key): https://stooq.com/q/d/l/?s=aapl.us&i=d
+// Then compute: MA20, MA50, R5, R20, Score (0.7*R20 + 0.3*R5)
+// Trend filter: Close > MA20 > MA50
+// Output: top N picks + equal-dollar allocation based on target exposure (cash * targetLeverage)
+// Notes: EOD data (good for weekly ranking). Not real-time bid/ask.
 
-const fileInput = document.getElementById("fileInput");
-const analyzeBtn = document.getElementById("analyzeBtn");
-const clearBtn = document.getElementById("clearBtn");
-const uploadStatus = document.getElementById("uploadStatus");
+const statusDiv = document.getElementById("status");
 const resultsDiv = document.getElementById("results");
 
-let datasets = []; // { ticker, rows: [{date, close}] }
+document.getElementById("useStarterBtn").addEventListener("click", () => {
+  document.getElementById("tickers").value =
+    "SPY QQQ IWM NVDA MSFT META AMZN AAPL AVGO AMD SMH SOXX XLK XLY";
+});
 
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  if (lines.length < 3) throw new Error("CSV too short");
+document.getElementById("clearBtn").addEventListener("click", () => {
+  document.getElementById("tickers").value = "";
+  statusDiv.textContent = "";
+  resultsDiv.innerHTML = `<p class="small">Enter tickers, then click <b>Fetch & Analyze</b>.</p>`;
+});
 
-  const header = lines[0].split(",").map(s => s.trim());
-  const dateIdx = header.findIndex(h => h.toLowerCase() === "date");
-  let closeIdx = header.findIndex(h => h.toLowerCase() === "close");
-  if (closeIdx === -1) closeIdx = header.findIndex(h => h.toLowerCase() === "adj close");
-  if (dateIdx === -1 || closeIdx === -1) {
-    throw new Error("CSV must include Date and Close (or Adj Close) columns.");
+document.getElementById("fetchAnalyzeBtn").addEventListener("click", async () => {
+  const cash = num("cash");
+  const maxLev = num("maxLeverage");
+  const targetLev = num("targetLeverage");
+  const numPicks = Math.max(1, Math.floor(num("numPicks")));
+  const minPrice = num("minPrice");
+  const lookbackDays = Math.max(80, Math.floor(num("lookbackDays")));
+
+  const stopLoss = num("stopLoss");
+  const trail1 = num("trail1");
+  const trail2 = num("trail2");
+
+  if (!Number.isFinite(cash) || cash <= 0) return setStatus("Cash must be > 0.");
+  if (targetLev > maxLev) return setStatus("Target Exposure cannot exceed Max Buying Power.");
+
+  const tickers = parseTickers(document.getElementById("tickers").value);
+  if (!tickers.length) return setStatus("Enter at least 1 ticker.");
+
+  setStatus(`Fetching data for ${tickers.length} ticker(s)…`);
+
+  const metrics = [];
+  let ok = 0, bad = 0;
+
+  // Fetch sequentially to be polite / avoid school network throttles
+  for (const t of tickers) {
+    try {
+      const rows = await fetchStooqDaily(t);
+      const m = computeMetrics(t, rows, minPrice, lookbackDays);
+      if (m) {
+        metrics.push(m);
+        ok++;
+      } else {
+        bad++;
+      }
+    } catch (e) {
+      bad++;
+    }
   }
+
+  if (!metrics.length) {
+    setStatus(`No usable data. Loaded: ${ok}, failed/filtered: ${bad}.`);
+    resultsDiv.innerHTML =
+      `<p class="small">Nothing passed filters. Try bigger tickers (SPY, QQQ, AAPL, MSFT) and ensure your school network allows Stooq.</p>`;
+    return;
+  }
+
+  // Rank: trendOk first, then score desc
+  metrics.sort((a, b) => {
+    if (a.trendOk !== b.trendOk) return a.trendOk ? -1 : 1;
+    return b.score - a.score;
+  });
+
+  const eligible = metrics.filter(x => x.trendOk);
+  const picks = eligible.slice(0, numPicks);
+
+  const targetExposure = cash * targetLev;
+  const perPos = picks.length ? targetExposure / picks.length : 0;
+
+  setStatus(`Done. Usable: ${ok}, failed/filtered: ${bad}. Eligible (trend ok): ${eligible.length}.`);
+
+  const stopText =
+    `Stops: initial stop = ${stopLoss}% below entry. After +8% gain use ${trail1}% trailing stop. After +15% gain use ${trail2}% trailing stop.`;
+
+  resultsDiv.innerHTML = `
+    <div class="row" style="align-items:center;justify-content:space-between;">
+      <div>
+        <span class="badge">Target Exposure</span> <b>${fmtMoney(targetExposure)}</b>
+        <span class="badge" style="margin-left:10px;">Per Position</span> <b>${fmtMoney(perPos)}</b>
+      </div>
+      <div class="small">${stopText}</div>
+    </div>
+
+    ${picks.length ? renderPicksTable(picks, perPos) : `<p class="small">No tickers passed trend filter (Close > MA20 > MA50).</p>`}
+    ${renderFullRanking(metrics)}
+    <p class="small"><b>Weekly routine:</b> run this Friday after close → hold top N trend-passers → rebalance weekly unless stopped out.</p>
+  `;
+});
+
+function num(id) {
+  return Number(document.getElementById(id).value);
+}
+
+function setStatus(msg) {
+  statusDiv.textContent = msg;
+}
+
+function parseTickers(text) {
+  return Array.from(
+    new Set(
+      text
+        .toUpperCase()
+        .replace(/[\n,]+/g, " ")
+        .split(/\s+/)
+        .map(s => s.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function fetchStooqDaily(ticker) {
+  // Stooq format for US is "aapl.us"
+  const sym = ticker.toLowerCase() + ".us";
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(sym)}&i=d`;
+
+  const res = await fetch(url, { mode: "cors" });
+  if (!res.ok) throw new Error("Fetch failed");
+  const text = await res.text();
+
+  const rows = parseStooqCSV(text);
+  // sort ascending
+  rows.sort((a, b) => a.date - b.date);
+  return rows;
+}
+
+function parseStooqCSV(text) {
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (lines.length < 10) throw new Error("Not enough rows");
+
+  const header = lines[0].split(",").map(x => x.trim().toLowerCase());
+  const dateIdx = header.indexOf("date");
+  const closeIdx = header.indexOf("close");
+  if (dateIdx === -1 || closeIdx === -1) throw new Error("Missing columns");
 
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].split(",");
-    if (parts.length < Math.max(dateIdx, closeIdx) + 1) continue;
-
-    const dateStr = parts[dateIdx].trim();
-    const closeStr = parts[closeIdx].trim();
-    const close = Number(closeStr);
-    if (!dateStr || !Number.isFinite(close)) continue;
-
-    // Parse date; keep as ISO-ish ordering
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) continue;
-
-    rows.push({ date: d, close });
+    if (parts.length <= Math.max(dateIdx, closeIdx)) continue;
+    const d = new Date(parts[dateIdx].trim());
+    const c = Number(parts[closeIdx].trim());
+    if (!Number.isNaN(d.getTime()) && Number.isFinite(c)) rows.push({ date: d, close: c });
   }
-
-  // Many downloads are newest->oldest; sort ascending by date
-  rows.sort((a, b) => a.date - b.date);
   return rows;
 }
 
@@ -62,137 +168,38 @@ function pctChange(values, lookback) {
   return now / past - 1;
 }
 
-function formatPct(x) {
-  if (x === null || x === undefined) return "—";
+function computeMetrics(ticker, rows, minPrice, lookbackDays) {
+  // Use only the last lookbackDays rows (still needs >= 60)
+  if (rows.length < 70) return null;
+  const slice = rows.slice(Math.max(0, rows.length - lookbackDays));
+  const closes = slice.map(r => r.close);
+  if (closes.length < 60) return null;
+
+  const last = closes[closes.length - 1];
+  if (last < minPrice) return null;
+
+  const ma20 = sma(closes, 20);
+  const ma50 = sma(closes, 50);
+  const r5 = pctChange(closes, 5);
+  const r20 = pctChange(closes, 20);
+  if (ma20 === null || ma50 === null || r5 === null || r20 === null) return null;
+
+  const trendOk = last > ma20 && ma20 > ma50;
+  const score = 0.7 * r20 + 0.3 * r5;
+
+  return { ticker, last, ma20, ma50, r5, r20, score, trendOk };
+}
+
+function fmtPct(x) {
   return (x * 100).toFixed(2) + "%";
 }
 
-function formatMoney(x) {
+function fmtMoney(x) {
   return "$" + Math.round(x).toLocaleString();
 }
 
-function inferTickerFromFilename(name) {
-  // Common: "AAPL.csv" or "AAPL (1).csv"
-  const base = name.replace(/\.[^/.]+$/, "");
-  const ticker = base.split(" ")[0].replace(/[^A-Za-z0-9.\-]/g, "");
-  return ticker.toUpperCase() || "UNKNOWN";
-}
-
-fileInput.addEventListener("change", async (e) => {
-  datasets = [];
-  uploadStatus.textContent = "";
-
-  const files = Array.from(e.target.files || []);
-  if (!files.length) return;
-
-  let ok = 0, bad = 0;
-  for (const f of files) {
-    try {
-      const text = await f.text();
-      const rows = parseCSV(text);
-      const ticker = inferTickerFromFilename(f.name);
-      datasets.push({ ticker, rows });
-      ok++;
-    } catch (err) {
-      bad++;
-      console.warn("Failed to parse", f.name, err);
-    }
-  }
-
-  uploadStatus.textContent = `Loaded ${ok} file(s). ${bad ? `Failed: ${bad}.` : ""}`;
-});
-
-clearBtn.addEventListener("click", () => {
-  datasets = [];
-  fileInput.value = "";
-  uploadStatus.textContent = "";
-  resultsDiv.innerHTML = `<p class="small">Upload CSVs and click <b>Analyze</b>.</p>`;
-});
-
-analyzeBtn.addEventListener("click", () => {
-  const cash = Number(document.getElementById("cash").value);
-  const maxLeverage = Number(document.getElementById("maxLeverage").value);
-  const targetLeverage = Number(document.getElementById("targetLeverage").value);
-  const numPicks = Number(document.getElementById("numPicks").value);
-  const minPrice = Number(document.getElementById("minPrice").value);
-
-  const stopLoss = Number(document.getElementById("stopLoss").value);
-  const trail1 = Number(document.getElementById("trail1").value);
-  const trail2 = Number(document.getElementById("trail2").value);
-
-  if (!datasets.length) {
-    resultsDiv.innerHTML = `<p class="small">No CSVs loaded yet.</p>`;
-    return;
-  }
-  if (!Number.isFinite(cash) || cash <= 0) {
-    resultsDiv.innerHTML = `<p class="small">Cash must be a positive number.</p>`;
-    return;
-  }
-  if (targetLeverage > maxLeverage) {
-    resultsDiv.innerHTML = `<p class="small">Target Exposure cannot exceed Max Buying Power Multiplier.</p>`;
-    return;
-  }
-
-  // Compute metrics per ticker
-  const rowsOut = [];
-  for (const ds of datasets) {
-    const closes = ds.rows.map(r => r.close);
-    if (closes.length < 60) continue; // need enough history for MA50 + lookbacks
-
-    const lastClose = closes[closes.length - 1];
-    if (lastClose < minPrice) continue;
-
-    const ma20 = sma(closes, 20);
-    const ma50 = sma(closes, 50);
-    const r5 = pctChange(closes, 5);
-    const r20 = pctChange(closes, 20);
-
-    if (ma20 === null || ma50 === null || r5 === null || r20 === null) continue;
-
-    const trendOk = lastClose > ma20 && ma20 > ma50;
-    const score = 0.7 * r20 + 0.3 * r5;
-
-    rowsOut.push({
-      ticker: ds.ticker,
-      lastClose,
-      ma20,
-      ma50,
-      r5,
-      r20,
-      score,
-      trendOk
-    });
-  }
-
-  if (!rowsOut.length) {
-    resultsDiv.innerHTML = `<p class="small">No usable tickers found. Make sure your CSVs have enough history and include Date + Close columns.</p>`;
-    return;
-  }
-
-  // Rank: trendOk first, then score desc
-  rowsOut.sort((a, b) => {
-    if (a.trendOk !== b.trendOk) return a.trendOk ? -1 : 1;
-    return b.score - a.score;
-  });
-
-  const eligible = rowsOut.filter(r => r.trendOk);
-  const picks = eligible.slice(0, Math.max(1, numPicks));
-
-  const targetExposure = cash * targetLeverage;
-  const perPosition = picks.length ? targetExposure / picks.length : 0;
-
-  const stopText =
-    `Stops: initial stop = ${stopLoss}% below entry. After +8% gain use ${trail1}% trailing stop. After +15% gain use ${trail2}% trailing stop.`;
-
-  // Build output HTML
-  const picksHtml = `
-    <div class="row" style="align-items:center;justify-content:space-between;">
-      <div>
-        <span class="badge">Target Exposure</span> <b>${formatMoney(targetExposure)}</b>
-        <span class="badge" style="margin-left:10px;">Per Position</span> <b>${formatMoney(perPosition)}</b>
-      </div>
-      <div class="small">${stopText}</div>
-    </div>
+function renderPicksTable(picks, perPos) {
+  return `
     <table>
       <thead>
         <tr>
@@ -207,25 +214,28 @@ analyzeBtn.addEventListener("click", () => {
         </tr>
       </thead>
       <tbody>
-        ${picks.map((r, i) => `
+        ${picks.map((p, i) => `
           <tr>
-            <td><b>${i + 1}. ${r.ticker}</b></td>
-            <td>${r.lastClose.toFixed(2)}</td>
-            <td>${r.ma20.toFixed(2)}</td>
-            <td>${r.ma50.toFixed(2)}</td>
-            <td>${formatPct(r.r5)}</td>
-            <td>${formatPct(r.r20)}</td>
-            <td>${formatPct(r.score)}</td>
-            <td><b>${formatMoney(perPosition)}</b></td>
+            <td><b>${i + 1}. ${p.ticker}</b></td>
+            <td>${p.last.toFixed(2)}</td>
+            <td>${p.ma20.toFixed(2)}</td>
+            <td>${p.ma50.toFixed(2)}</td>
+            <td>${fmtPct(p.r5)}</td>
+            <td>${fmtPct(p.r20)}</td>
+            <td>${fmtPct(p.score)}</td>
+            <td><b>${fmtMoney(perPos)}</b></td>
           </tr>
         `).join("")}
       </tbody>
     </table>
   `;
+}
 
-  const fullRankHtml = `
+function renderFullRanking(all) {
+  const top = all.slice(0, 60);
+  return `
     <details>
-      <summary class="small">Show full ranking</summary>
+      <summary class="small">Show full ranking (top 60)</summary>
       <table>
         <thead>
           <tr>
@@ -238,30 +248,19 @@ analyzeBtn.addEventListener("click", () => {
           </tr>
         </thead>
         <tbody>
-          ${rowsOut.slice(0, 60).map(r => `
+          ${top.map(p => `
             <tr>
-              <td>${r.ticker}</td>
-              <td>${r.trendOk ? "✅" : "—"}</td>
-              <td>${r.lastClose.toFixed(2)}</td>
-              <td>${formatPct(r.r5)}</td>
-              <td>${formatPct(r.r20)}</td>
-              <td>${formatPct(r.score)}</td>
+              <td>${p.ticker}</td>
+              <td>${p.trendOk ? "✅" : "—"}</td>
+              <td>${p.last.toFixed(2)}</td>
+              <td>${fmtPct(p.r5)}</td>
+              <td>${fmtPct(p.r20)}</td>
+              <td>${fmtPct(p.score)}</td>
             </tr>
           `).join("")}
         </tbody>
       </table>
-      <p class="small">Showing top 60. Trend = Close &gt; MA20 &gt; MA50.</p>
+      <p class="small">Trend = Close &gt; MA20 &gt; MA50. Ranked by Score = 0.7·R20 + 0.3·R5.</p>
     </details>
   `;
-
-  const warnings = [];
-  if (eligible.length < numPicks) warnings.push(`Only ${eligible.length} tickers passed the trend filter. Upload more tickers/ETFs.`);
-  if (targetLeverage > 1.8) warnings.push(`High exposure (${targetLeverage}×) can blow up quickly. Consider 1.6× unless you’re behind mid-month.`);
-
-  resultsDiv.innerHTML = `
-    ${warnings.length ? `<div class="status">⚠️ ${warnings.join(" ")}</div>` : ""}
-    ${eligible.length ? picksHtml : `<p class="small">No tickers passed the trend filter (Close > MA20 > MA50).</p>`}
-    ${fullRankHtml}
-  `;
-});
-
+}
