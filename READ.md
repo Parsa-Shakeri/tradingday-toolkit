@@ -1,21 +1,19 @@
-# Trading Day Toolkit (Static)
+# Trading Day Auto Toolkit
 
-A simple browser-based tool for ranking tickers by short-term momentum (R20/R5),
-filtering by trend (Close > MA20 > MA50), and producing target allocations and stop suggestions.
+Static GitHub Pages tool:
+- Enter tickers
+- Click "Fetch & Analyze"
+- Tool downloads historical daily prices (no API key) and ranks tickers by momentum + trend filter.
 
-## How to use
-1. Download historical CSVs for tickers you care about (Yahoo Finance works).
-2. Open the site (locally or via GitHub Pages).
-3. Upload CSVs (Date + Close or Adj Close).
-4. Click Analyze.
+## Deploy (GitHub Pages)
+1. Create repo: `tradingday-toolkit`
+2. Add: index.html, style.css, app.js, README.md
+3. Settings → Pages → Deploy from branch → main / root
+4. Open your site:
+   https://YOUR-USERNAME.github.io/tradingday-toolkit/
 
-## Deploy to GitHub Pages
-1. Create a repo (e.g., `tradingday-toolkit`).
-2. Upload `index.html`, `style.css`, `app.js`, `README.md`.
-3. Repo Settings → Pages → "Deploy from a branch" → Branch: `main` / root.
-4. Your site will appear at: `https://YOUR-USERNAME.github.io/tradingday-toolkit/`
+## Data Source
+Uses Stooq CSV endpoints (no key):
+https://stooq.com/q/d/l/?s=aapl.us&i=d
 
-## Notes
-- No backend, no API keys, works on school computers.
-- Not financial advice.
-
+If your network blocks Stooq, tell me and I’ll provide an alternate approach.
