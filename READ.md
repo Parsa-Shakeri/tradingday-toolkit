@@ -1,19 +1,14 @@
-# Trading Day Auto Toolkit
+# Trading Day Picks (Auto)
 
-Static GitHub Pages tool:
-- Enter tickers
-- Click "Fetch & Analyze"
-- Tool downloads historical daily prices (no API key) and ranks tickers by momentum + trend filter.
+A one-button GitHub Pages tool that fetches historical prices and outputs 4 competition-style picks.
 
-## Deploy (GitHub Pages)
-1. Create repo: `tradingday-toolkit`
-2. Add: index.html, style.css, app.js, README.md
-3. Settings → Pages → Deploy from branch → main / root
-4. Open your site:
-   https://YOUR-USERNAME.github.io/tradingday-toolkit/
+## Deploy on GitHub Pages
+1. Create a repo (e.g. `tradingday-picks`)
+2. Add `index.html`, `app.js`, `README.md`
+3. Settings → Pages → Deploy from branch → `main` / root
+4. Open: https://YOUR-USERNAME.github.io/tradingday-picks/
 
-## Data Source
-Uses Stooq CSV endpoints (no key):
-https://stooq.com/q/d/l/?s=aapl.us&i=d
-
-If your network blocks Stooq, tell me and I’ll provide an alternate approach.
+## Notes
+- Uses Stooq daily CSV endpoints (no API key).
+- Outputs 4 picks using a simple momentum + trend filter.
+- End-of-day data is intended for weekly rebalance, not day-trading.
