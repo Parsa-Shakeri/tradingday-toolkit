@@ -1,1 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trading Day Toolkit</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Trading Day Toolkit</h1>
+    <p class="sub">Upload historical prices (CSV) → rank tickers → get allocation + stops.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1) Competition Settings</h2>
+
+      <div class="grid">
+        <label>
+          Starting Cash ($)
+          <input id="cash" type="number" value="1000000" min="0" step="1000" />
+        </label>
+
+        <label>
+          Max Buying Power Multiplier (margin)
+          <input id="maxLeverage" type="number" value="2" min="1" step="0.1" />
+        </label>
+
+        <label>
+          Target Exposure Multiplier
+          <input id="targetLeverage" type="number" value="1.6" min="1" max="2" step="0.1" />
+        </label>
+
+        <label>
+          Picks (N)
+          <input id="numPicks" type="number" value="4" min="1" max="10" step="1" />
+        </label>
+
+        <label>
+          Min Price ($)
+          <input id="minPrice" type="number" value="5" min="0" step="0.01" />
+        </label>
+
+        <label>
+          Stop Loss (% below entry)
+          <input id="stopLoss" type="number" value="7" min="0" max="50" step="0.5" />
+        </label>
+
+        <label>
+          Trail after +8% gain (%)
+          <input id="trail1" type="number" value="6" min="0" max="50" step="0.5" />
+        </label>
+
+        <label>
+          Trail after +15% gain (%)
+          <input id="trail2" type="number" value="4.5" min="0" max="50" step="0.5" />
+        </label>
+      </div>
+
+      <div class="hint">
+        Tip: use <b>1.6×</b> exposure early; if you’re behind mid-month, consider <b>1.9×</b>.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2) Upload Price CSVs</h2>
+      <p class="small">
+        Upload one or more CSV files. Each CSV should contain daily prices for a single ticker.
+        Accepted columns: <b>Date</b> and <b>Close</b> (or <b>Adj Close</b>). Header row required.
+      </p>
+
+      <input id="fileInput" type="file" accept=".csv,text/csv" multiple />
+      <div class="row">
+        <button id="analyzeBtn">Analyze</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+
+      <details class="small">
+        <summary>Where do I get CSVs?</summary>
+        <ul>
+          <li>Yahoo Finance → Ticker → Historical Data → Download</li>
+          <li>Any data source that provides Date + Close columns</li>
+        </ul>
+      </details>
+
+      <div id="uploadStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>3) Results</h2>
+      <div id="results" class="results">
+        <p class="small">Upload CSVs and click <b>Analyze</b>.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4) Action Checklist (What to do in StockTrak)</h2>
+      <ol class="small" id="checklist">
+        <li>Every Friday after close: recompute ranks; hold the top N that pass trend filter (Close &gt; MA20 &gt; MA50).</li>
+        <li>Use <b>LIMIT</b> orders for entries/exits (except emergency exits).</li>
+        <li>Set stops: initial stop = X% below entry, then trailing stop ladder as you gain.</li>
+        <li>Don’t overtrade: rebalance weekly unless stopped out.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <p class="small">
+      Made for education. This is not financial advice.
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
 
