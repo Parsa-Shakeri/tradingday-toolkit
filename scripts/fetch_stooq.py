@@ -36,25 +36,22 @@ def parse_close_series(csv_text: str):
         rows.append([d, c])
 
     rows.sort(key=lambda x: x[0])
-    if len(rows) < 70:
+    if len(rows) < 220:   # need MA200 + returns
         return None
     if rows[-1][1] < MIN_PRICE:
         return None
-    return rows[-260:]  # ~1 trading year (keeps file size reasonable)
+    return rows[-260:]    # keep ~1 trading year
 
 def load_universe():
     p = Path("data/universe.txt")
     if not p.exists():
         raise RuntimeError("Missing data/universe.txt")
-
     tickers = []
     for line in p.read_text(encoding="utf-8").splitlines():
         t = line.strip().upper()
-        if not t or t.startswith("#"):
-            continue
-        tickers.append(t)
-
-    # de-dup, preserve order
+        if t and not t.startswith("#"):
+            tickers.append(t)
+    # de-dup preserve order
     seen = set()
     out = []
     for t in tickers:
@@ -81,12 +78,11 @@ def main():
             if series:
                 out["tickers"][t] = series
                 ok += 1
-            time.sleep(0.15)  # polite + avoids throttles
+            time.sleep(0.12)  # helps avoid throttling
         except:
             pass
 
     out["count_loaded"] = ok
-
     Path("data").mkdir(parents=True, exist_ok=True)
     Path("data/latest.json").write_text(json.dumps(out), encoding="utf-8")
 
