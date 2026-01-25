@@ -22,6 +22,7 @@ jobs:
       - run: python scripts/fetch_stooq.py
 
 
+
       - run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
