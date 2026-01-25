@@ -28,3 +28,4 @@ jobs:
           git add data/latest.json
           git commit -m "Update market data" || exit 0
           git push
+          git add data/latest.json data/universe.txt
