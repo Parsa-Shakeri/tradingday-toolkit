@@ -18,7 +18,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - run: python scripts/build_universe.py
       - run: python scripts/fetch_stooq.py
+
 
       - run: |
           git config user.name "github-actions"
