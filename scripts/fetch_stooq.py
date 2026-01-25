@@ -2,46 +2,93 @@ import json
 import time
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
-UNIVERSE = [
-  "SPY","QQQ","IWM","DIA",
-  "NVDA","MSFT","AAPL","AMZN","META","GOOGL","AVGO","AMD","TSLA",
-  "XLK","XLY","XLF","XLE","XLI","XLV",
-  "SMH","SOXX","ARKK","COST","LLY","UNH","JPM","V","MA","NFLX"
-]
+MIN_PRICE = 5.0
 
-def fetch_csv(ticker):
+def fetch_csv(ticker: str) -> str:
     sym = ticker.lower() + ".us"
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
     with urllib.request.urlopen(url, timeout=30) as r:
         return r.read().decode("utf-8", errors="replace")
 
-def parse(csv_text):
-    lines = [l for l in csv_text.splitlines() if l.strip()]
-    header = lines[0].lower().split(",")
+def parse_close_series(csv_text: str):
+    lines = [ln.strip() for ln in csv_text.splitlines() if ln.strip()]
+    if len(lines) < 30:
+        return None
+
+    header = [h.strip().lower() for h in lines[0].split(",")]
+    if "date" not in header or "close" not in header:
+        return None
     di = header.index("date")
     ci = header.index("close")
 
     rows = []
-    for line in lines[1:]:
-        p = line.split(",")
-        rows.append([p[di], float(p[ci])])
-    return rows[-200:]
+    for ln in lines[1:]:
+        parts = ln.split(",")
+        if len(parts) <= max(di, ci):
+            continue
+        d = parts[di].strip()
+        try:
+            c = float(parts[ci].strip())
+        except:
+            continue
+        rows.append([d, c])
 
-out = {
-    "updated_utc": datetime.now(timezone.utc).isoformat(),
-    "tickers": {}
-}
+    rows.sort(key=lambda x: x[0])
+    if len(rows) < 70:
+        return None
+    if rows[-1][1] < MIN_PRICE:
+        return None
+    return rows[-260:]  # ~1 trading year (keeps file size reasonable)
 
-for t in UNIVERSE:
-    try:
-        data = parse(fetch_csv(t))
-        if len(data) >= 70:
-            out["tickers"][t] = data
-        time.sleep(0.2)
-    except:
-        pass
+def load_universe():
+    p = Path("data/universe.txt")
+    if not p.exists():
+        raise RuntimeError("Missing data/universe.txt")
 
-with open("data/latest.json", "w") as f:
-    json.dump(out, f)
+    tickers = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        t = line.strip().upper()
+        if not t or t.startswith("#"):
+            continue
+        tickers.append(t)
 
+    # de-dup, preserve order
+    seen = set()
+    out = []
+    for t in tickers:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+def main():
+    universe = load_universe()
+
+    out = {
+        "updated_utc": datetime.now(timezone.utc).isoformat(),
+        "source": "stooq",
+        "min_price": MIN_PRICE,
+        "count_requested": len(universe),
+        "tickers": {}
+    }
+
+    ok = 0
+    for t in universe:
+        try:
+            series = parse_close_series(fetch_csv(t))
+            if series:
+                out["tickers"][t] = series
+                ok += 1
+            time.sleep(0.15)  # polite + avoids throttles
+        except:
+            pass
+
+    out["count_loaded"] = ok
+
+    Path("data").mkdir(parents=True, exist_ok=True)
+    Path("data/latest.json").write_text(json.dumps(out), encoding="utf-8")
+
+if __name__ == "__main__":
+    main()
