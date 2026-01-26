@@ -12,50 +12,50 @@ def fetch_csv(ticker: str) -> str:
     with urllib.request.urlopen(url, timeout=30) as r:
         return r.read().decode("utf-8", errors="replace")
 
-def parse_close_series(csv_text: str):
+def parse_ohlcv(csv_text: str):
     lines = [ln.strip() for ln in csv_text.splitlines() if ln.strip()]
-    if len(lines) < 30:
+    if len(lines) < 40:
         return None
 
     header = [h.strip().lower() for h in lines[0].split(",")]
-    if "date" not in header or "close" not in header:
+    needed = ["date","open","high","low","close","volume"]
+    if any(k not in header for k in needed):
         return None
-    di = header.index("date")
-    ci = header.index("close")
+
+    idx = {k: header.index(k) for k in needed}
 
     rows = []
     for ln in lines[1:]:
-        parts = ln.split(",")
-        if len(parts) <= max(di, ci):
+        p = ln.split(",")
+        if len(p) <= max(idx.values()):
             continue
-        d = parts[di].strip()
         try:
-            c = float(parts[ci].strip())
+            d = p[idx["date"]].strip()
+            o = float(p[idx["open"]])
+            h = float(p[idx["high"]])
+            l = float(p[idx["low"]])
+            c = float(p[idx["close"]])
+            v = float(p[idx["volume"]])
         except:
             continue
-        rows.append([d, c])
+        rows.append([d, o, h, l, c, v])
 
     rows.sort(key=lambda x: x[0])
-    if len(rows) < 220:   # need MA200 + returns
+    if len(rows) < 220:
         return None
-    if rows[-1][1] < MIN_PRICE:
+    if rows[-1][4] < MIN_PRICE:   # close
         return None
-    return rows[-260:]    # keep ~1 trading year
+    return rows[-260:]            # ~1 trading year
 
 def load_universe():
     p = Path("data/universe.txt")
     if not p.exists():
         raise RuntimeError("Missing data/universe.txt")
-    tickers = []
+    out = []
+    seen = set()
     for line in p.read_text(encoding="utf-8").splitlines():
         t = line.strip().upper()
-        if t and not t.startswith("#"):
-            tickers.append(t)
-    # de-dup preserve order
-    seen = set()
-    out = []
-    for t in tickers:
-        if t not in seen:
+        if t and not t.startswith("#") and t not in seen:
             seen.add(t)
             out.append(t)
     return out
@@ -66,6 +66,7 @@ def main():
     out = {
         "updated_utc": datetime.now(timezone.utc).isoformat(),
         "source": "stooq",
+        "schema": "d,open,high,low,close,volume",
         "min_price": MIN_PRICE,
         "count_requested": len(universe),
         "tickers": {}
@@ -74,11 +75,11 @@ def main():
     ok = 0
     for t in universe:
         try:
-            series = parse_close_series(fetch_csv(t))
+            series = parse_ohlcv(fetch_csv(t))
             if series:
                 out["tickers"][t] = series
                 ok += 1
-            time.sleep(0.12)  # helps avoid throttling
+            time.sleep(0.12)
         except:
             pass
 
