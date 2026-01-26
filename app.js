@@ -1,7 +1,8 @@
 // Trading Day Picks — Enhanced
 // Adds: NEW flags, diversification cap (correlation), auto-run on load, late-month mode, explanations.
 // Reads data from: ./data/latest.json
-}
+alert("app.js loaded");
+
 let statusEl, outEl, btnEl;
 
 document.addEventListener("DOMContentLoaded", () => {
