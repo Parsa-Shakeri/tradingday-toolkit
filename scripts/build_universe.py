@@ -82,5 +82,10 @@ def main():
     Path("data/universe.txt").write_text("\n".join(universe) + "\n", encoding="utf-8")
     print(f"Wrote {len(universe)} tickers to data/universe.txt")
 
+    must_have = ["SPY", "QQQ", "IWM", "DIA"]
+    universe = [t for t in universe if t not in must_have]
+    universe = must_have + universe
+    universe = universe[:MAX_TICKERS]
+
 if __name__ == "__main__":
     main()
