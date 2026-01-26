@@ -102,7 +102,7 @@ async function run(isManualClick) {
       score += Math.min(0.06, 0.02 * (volSurge - 1));
       }
 
-      if (atr14p !== null) score -= Math.max(0, atr14p - 0.06); // penalize ATR% above ~6%
+      if (atr14p !== null) score -= Math.max(0, atr14p - 0.08); // penalize ATR% above ~6%
 
       // Late-month “protect rank”: small bonus to stay with yesterday’s winners
       if (lateMode && prevBuy4Set.has(ticker)) score += 0.02;
