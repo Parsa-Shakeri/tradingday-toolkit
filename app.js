@@ -97,7 +97,11 @@ async function run(isManualClick) {
 
       // Add the 3 metrics
       if (rs60 !== null) score += 0.20 * rs60;
-      if (volSurge !== null) score += Math.min(0.06, 0.02 * (volSurge - 1));
+     
+      if (volSurge !== null && volSurge > 1) {
+      score += Math.min(0.06, 0.02 * (volSurge - 1));
+      }
+
       if (atr14p !== null) score -= Math.max(0, atr14p - 0.06); // penalize ATR% above ~6%
 
       // Late-month “protect rank”: small bonus to stay with yesterday’s winners
