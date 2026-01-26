@@ -55,29 +55,74 @@ async function run(isManualClick) {
   const prevTop10Set = new Set(prev.top10);
   const prevBuy4Set = new Set(prev.buy4);
 
-  // Build metrics
-  const results = [];
-  for (const ticker in tickers) {
-    const rows = tickers[ticker];
-    if (!rows || rows.length < MIN_HISTORY) continue;
+const rows = tickers[ticker];
+if (!rows || rows.length < MIN_HISTORY) continue;
 
-    const closes = rows.map(r => r[1]);
-    const lastClose = last(closes);
+// rows: [d, o, h, l, c, v]
+const opens  = rows.map(r => r[1]);
+const highs  = rows.map(r => r[2]);
+const lows   = rows.map(r => r[3]);
+const closes = rows.map(r => r[4]);
+const vols   = rows.map(r => r[5]);
 
-    const ma20 = sma(closes, 20);
-    const ma50 = sma(closes, 50);
-    const ma200 = sma(closes, 200);
-    if ([ma20, ma50, ma200].some(v => v === null)) continue;
+const lastClose = last(closes);
 
-    const r20 = ret(closes, 20);
-    const r60 = ret(closes, 60);
-    if (r20 === null || r60 === null) continue;
+const ma20 = sma(closes, 20);
+const ma50 = sma(closes, 50);
+const ma200 = sma(closes, 200);
+if ([ma20, ma50, ma200].some(v => v === null)) continue;
 
-    // Volatility on last 20 returns
-    const vol20 = stdev(returns(closes, 21));
-    if (!Number.isFinite(vol20) || vol20 <= 0) continue;
+const r20 = ret(closes, 20);
+const r60 = ret(closes, 60);
+if (r20 === null || r60 === null) continue;
 
-    const trendStrong = (lastClose > ma20) && (ma20 > ma50) && (ma50 > ma200);
+const vol20 = stdev(returns(closes, 21));     // same as before
+const rsi14 = rsi(closes, 14);
+const atr14p = atrPercent(highs, lows, closes, 14); // ATR% of price
+const volSurge = vols.length >= 21 ? (last(vols) / sma(vols, 20)) : null;
+const dd60 = maxDrawdown(closes, 60);
+
+// Relative strength vs SPY (60d)
+const rs60 = relStrength60(tickers, ticker); // defined below (uses SPY)
+
+const trendStrong = (lastClose > ma20) && (ma20 > ma50) && (ma50 > ma200);
+const eligible = (lastClose > ma20) && (riskOn ? true : (trendStrong || isDefensiveETF(ticker)));
+
+// --- Scoring upgrades ---
+let volPenalty = riskOn ? 0.30 : 0.55;
+if (lateMode) volPenalty += 0.20;
+
+let score =
+  (0.45 * r60) +
+  (0.25 * r20) +
+  (trendStrong ? 0.06 : 0) -
+  (volPenalty * vol20);
+
+// Bonus: beating SPY over 60d
+if (rs60 !== null) score += 0.20 * rs60;
+
+// Bonus: volume confirmation (cap it so it doesn’t dominate)
+if (volSurge !== null) score += Math.min(0.06, 0.02 * (volSurge - 1));
+
+// Penalty: too wild (ATR%)
+if (atr14p !== null) score -= Math.max(0, atr14p - 0.06); // punish ATR% above ~6%
+
+// Penalty: totally overheated RSI
+if (rsi14 !== null && rsi14 > 80) score -= 0.05;
+if (rsi14 !== null && rsi14 < 35) score -= 0.03; // weak bounce risk
+
+// Penalty: ugly recent drawdown
+if (dd60 !== null) score -= 0.20 * Math.max(0, dd60 - 0.25); // punish drawdown >25%
+
+// Late-month stickiness stays the same
+if (lateMode && prevBuy4Set.has(ticker)) score += 0.02;
+
+results.push({
+  ticker, lastClose, r20, r60, vol20, rsi14, atr14p, volSurge, dd60, rs60,
+  trendStrong, eligible, score,
+  retSeries
+});
+
 
     // Basic eligibility:
     // - always require lastClose > MA20 (uptrend)
@@ -402,4 +447,58 @@ function pct(x) {
 
 function status(msg) {
   statusEl.textContent = msg;
+}
+function rsi(closes, period) {
+  if (closes.length <= period) return null;
+  let gains = 0, losses = 0;
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const ch = closes[i] - closes[i - 1];
+    if (ch >= 0) gains += ch;
+    else losses -= ch;
+  }
+  if (losses === 0) return 100;
+  const rs = gains / losses;
+  return 100 - (100 / (1 + rs));
+}
+
+function atrPercent(highs, lows, closes, period) {
+  if (closes.length <= period) return null;
+  let sumTR = 0;
+  for (let i = highs.length - period; i < highs.length; i++) {
+    const h = highs[i], l = lows[i], pc = closes[i - 1];
+    const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    sumTR += tr;
+  }
+  const atr = sumTR / period;
+  const lastClose = last(closes);
+  return lastClose ? (atr / lastClose) : null;
+}
+
+function maxDrawdown(closes, lookback) {
+  if (closes.length < lookback + 1) return null;
+  const slice = closes.slice(closes.length - lookback);
+  let peak = slice[0];
+  let maxDD = 0;
+  for (const x of slice) {
+    if (x > peak) peak = x;
+    const dd = (peak - x) / peak;
+    if (dd > maxDD) maxDD = dd;
+  }
+  return maxDD; // 0.25 = 25%
+}
+
+function relStrength60(tickersObj, tkr) {
+  const spy = tickersObj["SPY"];
+  const x = tickersObj[tkr];
+  if (!spy || !x) return null;
+  if (spy.length < 70 || x.length < 70) return null;
+
+  const spyCloses = spy.map(r => r[4]); // close
+  const xCloses = x.map(r => r[4]);
+
+  const spyR = ret(spyCloses, 60);
+  const xR = ret(xCloses, 60);
+  if (spyR === null || xR === null) return null;
+
+  return (xR - spyR); // positive means beating SPY
 }
