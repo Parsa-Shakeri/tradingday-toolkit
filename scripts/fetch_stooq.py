@@ -6,6 +6,13 @@ from pathlib import Path
 
 MIN_PRICE = 5.0
 
+def force_fetch(ticker: str):
+    try:
+        series = parse_ohlcv(fetch_csv(ticker))
+        return series
+    except:
+        return None
+
 def fetch_csv(ticker: str) -> str:
     sym = ticker.lower() + ".us"
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
