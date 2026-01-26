@@ -1,6 +1,24 @@
 // Trading Day Picks — Enhanced
 // Adds: NEW flags, diversification cap (correlation), auto-run on load, late-month mode, explanations.
 // Reads data from: ./data/latest.json
+let statusEl, outEl, btnEl;
+
+document.addEventListener("DOMContentLoaded", () => {
+  statusEl = document.getElementById("status");
+  outEl = document.getElementById("out");
+  btnEl = document.getElementById("go");
+
+  if (!btnEl) {
+    console.error("Button with id='go' not found.");
+    return;
+  }
+
+  // Attach click handler (this is what you're missing)
+  btnEl.addEventListener("click", () => run(true));
+
+  // Auto-run on page load
+  setTimeout(() => run(false), 50);
+});
 
 const statusEl = document.getElementById("status");
 const outEl = document.getElementById("out");
@@ -32,9 +50,17 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function run(isManualClick) {
-  btnEl.textContent = "Re-run";
-  status("Loading data…");
-  outEl.innerHTML = "";
+  try {
+    btnEl.textContent = "Re-run";
+    status("Loading data…");
+    outEl.innerHTML = "";
+    // ...rest of your run code...
+  } catch (e) {
+    console.error(e);
+    status("Error — open Console (Ctrl+Shift+I) to see it.");
+  }
+}
+
 
   const res = await fetch("./data/latest.json", { cache: "no-store" });
   if (!res.ok) return status("Could not load data/latest.json");
