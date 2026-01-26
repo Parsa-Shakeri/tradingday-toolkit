@@ -68,6 +68,12 @@ def load_universe():
     return out
 
 def main():
+    # --- Force critical benchmarks ---
+for t in ["SPY", "QQQ", "IWM", "DIA"]:
+    s = force_fetch(t)
+    if s:
+        out["tickers"][t] = s
+
     universe = load_universe()
 
     out = {
@@ -81,6 +87,9 @@ def main():
 
     ok = 0
     for t in universe:
+    if t in ("SPY", "QQQ", "IWM", "DIA"):
+        continue
+
         try:
             series = parse_ohlcv(fetch_csv(t))
             if series:
