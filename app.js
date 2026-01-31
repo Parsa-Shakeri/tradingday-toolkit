@@ -87,6 +87,7 @@ async function run(isManualClick) {
       const rs60 = relStrength60(tickers, ticker); // vs SPY
 
       const trendStrong = (lastClose > ma20) && (ma20 > ma50) && (ma50 > ma200);
+      const holdCash = (!riskOn && !riskOnShort);
 
       const eligible =
         (lastClose > ma20) &&
@@ -95,6 +96,7 @@ async function run(isManualClick) {
       // Base score (momentum + trend - volatility)
       let volPenalty = riskOn ? 0.30 : 0.55;
       if (lateMode) volPenalty += 0.20;
+      if (!riskOnShort) score *= 0.75;
 
       let score =
         (0.45 * r60) +
@@ -106,10 +108,11 @@ async function run(isManualClick) {
       if (rs60 !== null) score += 0.20 * rs60;
      
       if (volSurge !== null && volSurge > 1) {
-      score += Math.min(0.06, 0.02 * (volSurge - 1));
+      score += Math.min(0.06, 0.04 * (volSurge - 1));
       }
-
-      if (atr14p !== null) score -= Math.max(0, atr14p - 0.08); // penalize ATR% above ~6%
+      if (atr14p !== null) {
+      score *= Math.max(0.5, 1 - (atr14p / 0.20));
+      }
 
       // Late-month “protect rank”: small bonus to stay with yesterday’s winners
       if (lateMode && prevBuy4Set.has(ticker)) score += 0.02;
@@ -307,6 +310,9 @@ function computeMarketRegime(tickers) {
   const spyMA200 = sma(spyCloses, 200);
   const riskOn = spyMA200 !== null && spyLast > spyMA200;
   return { riskOn, spyLast, spyMA200 };
+  const spyMA50 = sma(spyCloses, 50);
+  const riskOnShort = spyLast > spyMA50;
+
 }
 
 function getLateMonthMode() {
