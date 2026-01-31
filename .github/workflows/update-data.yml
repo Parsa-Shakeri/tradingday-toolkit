@@ -2,7 +2,7 @@ name: Update market data
 
 on:
   schedule:
-    - cron: "15 13 * * 1-5"
+    - cron: "0 22 * * 1-5"  # 6pm ET, Mon–Fri
   workflow_dispatch:
 
 permissions:
