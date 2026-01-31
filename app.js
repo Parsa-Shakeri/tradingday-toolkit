@@ -67,6 +67,13 @@ async function run(isManualClick) {
       const ma200 = sma(closes, 200);
       if ([ma20, ma50, ma200].some(v => v === null)) continue;
 
+      const r10 = ret(closes, 10);
+      if (r10 === null) continue;
+
+      // Require acceleration
+      if (r10 < 0.5 * r20) continue;
+
+      
       const r20 = ret(closes, 20);
       const r60 = ret(closes, 60);
       if (r20 === null || r60 === null) continue;
