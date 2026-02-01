@@ -165,7 +165,13 @@ async function run(isManualClick) {
     });
 
   } catch (e) {
-    status("JS error. Your app.js is not running correctly.");
+  const msg = (e && e.message) ? e.message : String(e);
+  status("JS error: " + msg);
+  if (outEl) {
+    outEl.innerHTML = `
+      <p class="small"><b>Crash:</b> ${escapeHtml(msg)}</p>
+      <p class="small">If you see <code>fetch</code> or <code>Unexpected token</code>, it’s a file/path issue.</p>
+    `;
   }
 }
 
@@ -344,6 +350,12 @@ function writePrevState({ top10, buy4 }) {
 }
 
 // -------------------- Metrics helpers --------------------
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[c]));
+}
 
 function atrPercent(highs, lows, closes, period) {
   if (closes.length <= period) return null;
