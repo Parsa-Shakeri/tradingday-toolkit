@@ -1,10 +1,19 @@
-// Trading Day Picks — Clean + Advanced (OHLCV)
-// Metrics: RS vs SPY (60d), Volume Surge, ATR%
-// Also: NEW flags, diversification cap (correlation), auto-run on load, late-month mode, explanations.
-// Data: ./data/latest.json rows = [date, open, high, low, close, volume]
+// Trading Day Picks — Clean + Stable (copy/paste full file)
+// Reads: ./data/latest.json
+// Data rows: [date, open, high, low, close, volume]
+//
+// Features:
+// - Auto-run on load + button run
+// - Market regime (SPY MA200) + short-term regime (SPY MA50)
+// - Late-month mode
+// - NEW flag (localStorage)
+// - Diversification cap via correlation on last 60 returns
+// - 3 key metrics in scoring: RS vs SPY (60d), Volume Surge, ATR%
+// - Shows actual error text on page (no console needed)
 
 let statusEl, outEl, btnEl;
 
+// ---- Config (competition style) ----
 const BUY_N = 4;
 const SHOW_N = 10;
 const MIN_HISTORY = 220;
@@ -14,34 +23,46 @@ const CORR_MAX = 0.85;
 
 const LATE_WINDOW_DAYS = 7;
 
+// localStorage keys
 const LS_TOP10_KEY = "td_lastTop10";
 const LS_BUY4_KEY  = "td_lastBuy4";
 const LS_DATE_KEY  = "td_lastDate";
 
+// ---- Boot ----
 document.addEventListener("DOMContentLoaded", () => {
   statusEl = document.getElementById("status");
   outEl = document.getElementById("out");
   btnEl = document.getElementById("go");
 
-  if (!btnEl || !statusEl || !outEl) return;
+  if (!statusEl || !outEl) return;
 
-  btnEl.addEventListener("click", () => run(true));
-  setTimeout(() => run(false), 50); // auto-run on load
+  if (btnEl) {
+    btnEl.addEventListener("click", () => run(true));
+  }
+
+  // Auto-run shortly after load
+  setTimeout(() => run(false), 50);
 });
 
+// ---- Main ----
 async function run(isManualClick) {
   try {
-    btnEl.textContent = "Re-run";
+    if (btnEl) btnEl.textContent = "Re-run";
     status("Loading data…");
-    outEl.innerHTML = "";
+    if (outEl) outEl.innerHTML = "";
 
+    // Fetch data
     const res = await fetch("./data/latest.json", { cache: "no-store" });
-    if (!res.ok) return status("Could not load data/latest.json");
+    if (!res.ok) {
+      status("Could not load data/latest.json (404 or blocked).");
+      if (outEl) outEl.innerHTML = `<p class="small">Fetch failed. Check that <code>data/latest.json</code> exists in your repo.</p>`;
+      return;
+    }
 
     const json = await res.json();
     const tickers = json.tickers || {};
 
-    const { riskOn, spyLast, spyMA200 } = computeMarketRegime(tickers);
+    const { riskOn, riskOnShort, spyLast, spyMA200, spyMA50 } = computeMarketRegime(tickers);
     const { lateMode, daysRemaining } = getLateMonthMode();
 
     const prev = readPrevState();
@@ -62,18 +83,12 @@ async function run(isManualClick) {
 
       const lastClose = last(closes);
 
+      // Trend / momentum basics
       const ma20 = sma(closes, 20);
       const ma50 = sma(closes, 50);
       const ma200 = sma(closes, 200);
       if ([ma20, ma50, ma200].some(v => v === null)) continue;
 
-      const r10 = ret(closes, 10);
-      if (r10 === null) continue;
-
-      // Require acceleration
-      if (r10 < 0.5 * r20) continue;
-
-      
       const r20 = ret(closes, 20);
       const r60 = ret(closes, 60);
       if (r20 === null || r60 === null) continue;
@@ -81,43 +96,51 @@ async function run(isManualClick) {
       const vol20 = stdev(returns(closes, 21));
       if (!Number.isFinite(vol20) || vol20 <= 0) continue;
 
-      // 3 key extra metrics
+      // --- 3 key metrics ---
       const atr14p = atrPercent(highs, lows, closes, 14); // ATR% of price
-      const volSurge = (vols.length >= 21 && sma(vols, 20) !== null) ? (last(vols) / sma(vols, 20)) : null;
+      const volSurge = (vols.length >= 21 && sma(vols, 20) !== null)
+        ? (last(vols) / sma(vols, 20))
+        : null;
       const rs60 = relStrength60(tickers, ticker); // vs SPY
 
       const trendStrong = (lastClose > ma20) && (ma20 > ma50) && (ma50 > ma200);
-      const holdCash = (!riskOn && !riskOnShort);
 
+      // Eligibility: uptrend, and in risk-off require stronger trend or defensive ETF
       const eligible =
         (lastClose > ma20) &&
         (riskOn ? true : (trendStrong || isDefensiveETF(ticker)));
 
-      // Base score (momentum + trend - volatility)
+      // ---- Scoring ----
       let volPenalty = riskOn ? 0.30 : 0.55;
       if (lateMode) volPenalty += 0.20;
-      if (!riskOnShort) score *= 0.75;
 
+      // Base
       let score =
         (0.45 * r60) +
         (0.25 * r20) +
         (trendStrong ? 0.06 : 0) -
         (volPenalty * vol20);
 
-      // Add the 3 metrics
+      // Short-term market filter (apply AFTER score exists)
+      if (!riskOnShort) score *= 0.75;
+
+      // Add RS vs SPY
       if (rs60 !== null) score += 0.20 * rs60;
-     
+
+      // Volume surge bonus only if > 1 (breakout confirmation)
       if (volSurge !== null && volSurge > 1) {
-      score += Math.min(0.06, 0.04 * (volSurge - 1));
-      }
-      if (atr14p !== null) {
-      score *= Math.max(0.5, 1 - (atr14p / 0.20));
+        score += Math.min(0.06, 0.04 * (volSurge - 1));
       }
 
-      // Late-month “protect rank”: small bonus to stay with yesterday’s winners
+      // ATR scaling (reduce score if too wild)
+      if (atr14p !== null) {
+        score *= Math.max(0.5, 1 - (atr14p / 0.20));
+      }
+
+      // Late-month stickiness: tiny bonus for yesterday winners
       if (lateMode && prevBuy4Set.has(ticker)) score += 0.02;
 
-      // For diversification
+      // For diversification cap
       const retSeries = returns(closes, CORR_LOOKBACK + 1);
 
       results.push({
@@ -147,31 +170,44 @@ async function run(isManualClick) {
       buy4: buy4.map(x => x.ticker),
     });
 
+    // Status line
+    const regimeText =
+      Number.isFinite(spyLast) && Number.isFinite(spyMA200)
+        ? `SPY ${spyLast.toFixed(2)} vs MA200 ${spyMA200.toFixed(2)}`
+        : "SPY regime check unavailable";
+
+    const shortText =
+      Number.isFinite(spyLast) && Number.isFinite(spyMA50)
+        ? `SPY vs MA50 ${spyMA50.toFixed(2)}`
+        : "MA50 unavailable";
+
     status(
       `Done. Regime: ${riskOn ? "RISK-ON" : "RISK-OFF"}`
+      + ` | Short: ${riskOnShort ? "ON" : "OFF"}`
       + (lateMode ? ` | LATE-MONTH (protect) — ${daysRemaining} day(s) left` : "")
       + ` | Eligible: ${eligibleList.length}`
     );
 
     if (!buy4.length) {
-      outEl.innerHTML = `<p class="small">No eligible picks today. Try again tomorrow.</p>`;
+      if (outEl) outEl.innerHTML = `<p class="small">No eligible picks today. Try again tomorrow.</p>`;
       return;
     }
 
-    outEl.innerHTML = render(top10, buy4, {
-      riskOn, lateMode, daysRemaining,
+    if (outEl) outEl.innerHTML = render(top10, buy4, {
+      riskOn, riskOnShort, lateMode, daysRemaining,
       prevTop10Set, prevBuy4Set,
-      spyLast, spyMA200
+      spyLast, spyMA200, spyMA50, regimeText, shortText
     });
 
   } catch (e) {
-  const msg = (e && e.message) ? e.message : String(e);
-  status("JS error: " + msg);
-  if (outEl) {
-    outEl.innerHTML = `
-      <p class="small"><b>Crash:</b> ${escapeHtml(msg)}</p>
-      <p class="small">If you see <code>fetch</code> or <code>Unexpected token</code>, it’s a file/path issue.</p>
-    `;
+    const msg = (e && e.message) ? e.message : String(e);
+    status("JS error: " + msg);
+    if (outEl) {
+      outEl.innerHTML = `
+        <p class="small"><b>Crash:</b> ${escapeHtml(msg)}</p>
+        <p class="small">Common causes: missing <code>data/latest.json</code>, bad JSON, or wrong data schema.</p>
+      `;
+    }
   }
 }
 
@@ -182,14 +218,10 @@ function render(top10, buy4, ctx) {
   const modeText = ctx.riskOn ? "RISK-ON (aggressive)" : "RISK-OFF (defensive)";
   const lateText = ctx.lateMode ? ` | LATE-MONTH MODE (${ctx.daysRemaining} day(s) left)` : "";
 
-  const spyInfo = (Number.isFinite(ctx.spyLast) && Number.isFinite(ctx.spyMA200))
-    ? `SPY ${ctx.spyLast.toFixed(2)} vs MA200 ${ctx.spyMA200.toFixed(2)}`
-    : `SPY regime check unavailable`;
-
   return `
     <p class="small">
-      <b>Mode:</b> ${modeText}${lateText}<br/>
-      <b>Market:</b> ${spyInfo}<br/>
+      <b>Mode:</b> ${modeText} | <b>Short:</b> ${ctx.riskOnShort ? "ON" : "OFF"}${lateText}<br/>
+      <b>Market:</b> ${ctx.regimeText} | ${ctx.shortText}<br/>
       <b>BUY:</b> ${buy4.map(p => p.ticker).join(", ")}
     </p>
 
@@ -248,15 +280,16 @@ function render(top10, buy4, ctx) {
 function explainPick(x, ctx) {
   const trend = x.trendStrong ? "MA20 > MA50 > MA200 and price above MA20" : "price above MA20";
   const regime = ctx.riskOn ? "RISK-ON (momentum prioritized)" : "RISK-OFF (defensive filter)";
-  const late = ctx.lateMode ? "Late-month: higher vol penalty + slight bonus for prior winners." : "";
+  const short = ctx.riskOnShort ? "Short-term market supportive (SPY above MA50)" : "Short-term market weak (SPY below MA50)";
+  const late = ctx.lateMode ? "Late-month: higher volatility penalty + slight bonus for prior winners." : "";
   return `
     <ul>
       <li><b>Momentum:</b> R60=${pct(x.r60)}, R20=${pct(x.r20)}</li>
       <li><b>Trend:</b> ${trend}</li>
+      <li><b>RS vs SPY (60d):</b> ${x.rs60 === null ? "—" : pct(x.rs60)}</li>
+      <li><b>VolSurge:</b> ${x.volSurge === null ? "—" : x.volSurge.toFixed(2) + "×"}</li>
       <li><b>ATR%:</b> ${x.atr14p === null ? "—" : pct(x.atr14p)} (lower is smoother)</li>
-      <li><b>VolSurge:</b> ${x.volSurge === null ? "—" : x.volSurge.toFixed(2) + "×"} (breakout confirmation)</li>
-      <li><b>RS vs SPY (60d):</b> ${x.rs60 === null ? "—" : pct(x.rs60)} (beating market)</li>
-      <li><b>Regime:</b> ${regime}</li>
+      <li><b>Market:</b> ${regime}; ${short}</li>
       ${late ? `<li><b>Late-month:</b> ${late}</li>` : ""}
     </ul>
   `.trim();
@@ -310,15 +343,20 @@ function corr(a, b) {
 
 function computeMarketRegime(tickers) {
   const spy = tickers["SPY"];
-  if (!spy || spy.length < 210) return { riskOn: true, spyLast: NaN, spyMA200: NaN };
-  const spyCloses = spy.map(r => r[4]); // close (OHLCV)
-  const spyLast = last(spyCloses);
-  const spyMA200 = sma(spyCloses, 200);
-  const riskOn = spyMA200 !== null && spyLast > spyMA200;
-  return { riskOn, spyLast, spyMA200 };
-  const spyMA50 = sma(spyCloses, 50);
-  const riskOnShort = spyLast > spyMA50;
+  if (!spy || spy.length < 210) {
+    return { riskOn: true, riskOnShort: true, spyLast: NaN, spyMA200: NaN, spyMA50: NaN };
+  }
 
+  const spyCloses = spy.map(r => r[4]); // close
+  const spyLast = last(spyCloses);
+
+  const spyMA200 = sma(spyCloses, 200);
+  const spyMA50 = sma(spyCloses, 50);
+
+  const riskOn = (spyMA200 !== null) && (spyLast > spyMA200);
+  const riskOnShort = (spyMA50 !== null) && (spyLast > spyMA50);
+
+  return { riskOn, riskOnShort, spyLast, spyMA200, spyMA50 };
 }
 
 function getLateMonthMode() {
@@ -383,7 +421,7 @@ function relStrength60(tickersObj, tkr) {
   const xR = ret(xCloses, 60);
   if (spyR === null || xR === null) return null;
 
-  return (xR - spyR);
+  return (xR - spyR); // positive = beating SPY
 }
 
 // -------------------- Generic helpers --------------------
