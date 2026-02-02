@@ -58,6 +58,13 @@
     </section>
   </main>
 
+  <script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const s = document.getElementById("status");
+    if (s) s.textContent = "Inline JS is running ✅";
+  });
+</script>
+
   <script src="app.js"></script>
 </body>
 </html>
