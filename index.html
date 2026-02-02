@@ -53,18 +53,11 @@
         Stops (simple): initial stop <b>7%</b> below entry. When up ~8%, use <b>6% trailing stop</b>. When up ~15%, tighten to <b>4.5%</b>.
       </p>
       <p class="small" style="margin-top:10px">
-        If your school blocks the data source, you’ll see errors. Tell me what it says and I’ll switch the fetch method.
+        If data fails, the app will show the exact error message on this page.
       </p>
     </section>
   </main>
 
-  <script>
-  document.addEventListener("DOMContentLoaded", () => {
-    const s = document.getElementById("status");
-    if (s) s.textContent = "Inline JS is running ✅";
-  });
-</script>
-
-  <script src="app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
